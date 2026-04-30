@@ -86,6 +86,13 @@
       color: #6c7a99;
       font-weight: 500;
     }
+    #settings .label-sm {
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #7c8aa8;
+      font-weight: 400;
+    }
     #settings .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
     #settings .value {
       font-size: 10px; color: #aebbd8; font-variant-numeric: tabular-nums;
@@ -231,6 +238,34 @@
   <div class="group">
     <div class="label">Palette</div>
     <div id="paletteGrid" class="palette-grid"></div>
+  </div>
+
+  <div class="group">
+    <div class="label">Physics</div>
+
+    <div class="row">
+      <span class="label-sm">Repulsion</span>
+      <span id="repulsionValue" class="value">420</span>
+    </div>
+    <input id="repulsionSlider" type="range" min="200" max="700" step="10" value="420" />
+
+    <div class="row">
+      <span class="label-sm">Node Distance</span>
+      <span id="nodeDstValue" class="value">10</span>
+    </div>
+    <input id="nodeDstSlider" type="range" min="4" max="25" step="0.5" value="10" />
+
+    <div class="row">
+      <span class="label-sm">Cluster Distance</span>
+      <span id="clusterDstValue" class="value">55</span>
+    </div>
+    <input id="clusterDstSlider" type="range" min="25" max="100" step="2" value="55" />
+
+    <div class="row">
+      <span class="label-sm">Damping</span>
+      <span id="dampingValue" class="value">0.80</span>
+    </div>
+    <input id="dampingSlider" type="range" min="0.5" max="0.98" step="0.02" value="0.80" />
   </div>
 </div>
 <div id="stats"></div>
@@ -809,14 +844,14 @@ function prewarmSimulation(iterations = 350) {
 }
 
 // ── force simulation ──────────────────────────────────────────────────────────
-const REPULSION        = 420;
-const SPRING_LEN_INTRA = 10;
-const SPRING_LEN_INTER = 55;
-const SPRING_K_INTRA   = 0.06;
-const SPRING_K_INTER   = 0.018;
-const DAMPING          = 0.80;
-const CENTER_K         = 0.003;
-const DT               = 0.52;
+let REPULSION        = 420;   // node-to-node repulsion strength
+let SPRING_LEN_INTRA = 10;    // intra-cluster edge rest length
+let SPRING_LEN_INTER = 55;    // inter-cluster edge rest length
+let SPRING_K_INTRA   = 0.06;  // intra-cluster spring stiffness
+let SPRING_K_INTER   = 0.018; // inter-cluster spring stiffness
+let DAMPING          = 0.80;  // velocity damping per frame
+const CENTER_K       = 0.003; // center-of-mass attraction
+const DT             = 0.52;  // time step
 
 function simulate() {
   if (frozen || nodes.length === 0) return;
@@ -1159,6 +1194,35 @@ glowSlider.addEventListener('input', () => {
   const v = parseFloat(glowSlider.value);
   bloomPass.strength = v;
   glowValue.textContent = v.toFixed(2);
+});
+
+// physics sliders
+const repulsionSlider = document.getElementById('repulsionSlider');
+const repulsionValue  = document.getElementById('repulsionValue');
+repulsionSlider.addEventListener('input', () => {
+  REPULSION = parseFloat(repulsionSlider.value);
+  repulsionValue.textContent = REPULSION.toFixed(0);
+});
+
+const nodeDstSlider = document.getElementById('nodeDstSlider');
+const nodeDstValue  = document.getElementById('nodeDstValue');
+nodeDstSlider.addEventListener('input', () => {
+  SPRING_LEN_INTRA = parseFloat(nodeDstSlider.value);
+  nodeDstValue.textContent = SPRING_LEN_INTRA.toFixed(1);
+});
+
+const clusterDstSlider = document.getElementById('clusterDstSlider');
+const clusterDstValue  = document.getElementById('clusterDstValue');
+clusterDstSlider.addEventListener('input', () => {
+  SPRING_LEN_INTER = parseFloat(clusterDstSlider.value);
+  clusterDstValue.textContent = SPRING_LEN_INTER.toFixed(0);
+});
+
+const dampingSlider = document.getElementById('dampingSlider');
+const dampingValue  = document.getElementById('dampingValue');
+dampingSlider.addEventListener('input', () => {
+  DAMPING = parseFloat(dampingSlider.value);
+  dampingValue.textContent = DAMPING.toFixed(2);
 });
 
 // palette picker — render chips and wire selection
