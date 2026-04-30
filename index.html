@@ -207,6 +207,7 @@
     <div class="btn-row">
       <button id="btnFit">Fit View</button>
       <button id="btnAdd">Add Node</button>
+      <button id="btnAddMany">Add 50</button>
       <button id="btnReset">Reset</button>
       <button id="btnFreeze">Freeze</button>
     </div>
@@ -1040,18 +1041,44 @@ function updateHover() {
 // pause auto-rotate while the user interacts
 controls.addEventListener('start', () => { controls.autoRotate = false; });
 
-// ── UI buttons ────────────────────────────────────────────────────────────────
-document.getElementById('btnAdd').addEventListener('click', () => {
-  if (nodes.length >= 120) return;
-  // assign to smallest cluster
+// ── node addition ─────────────────────────────────────────────────────────────
+const MAX_NODES = 300;
+
+function addNode() {
+  if (nodes.length >= MAX_NODES) return false;
+  // assign to smallest cluster to rebalance
   const clusterSizes = clusters.map(c => nodes.filter(n => n.cluster === c).length);
   const ci = clusterSizes.indexOf(Math.min(...clusterSizes));
   const cluster = clusters[ci];
   const pos = cluster.centroid.clone().add(randInSphere(14));
   const newNode = makeNode(pos, cluster);
   const peers = nodes.filter(n => n.cluster === cluster && n !== newNode).sort(() => Math.random() - 0.5);
-  const count = Math.min(peers.length, 2 + Math.floor(Math.random() * 2));
-  for (let i = 0; i < count; i++) makeEdge(newNode, peers[i]);
+  const edgeCount = Math.min(peers.length, 2 + Math.floor(Math.random() * 2));
+  for (let i = 0; i < edgeCount; i++) makeEdge(newNode, peers[i]);
+  return true;
+}
+
+function addManyNodes(count) {
+  const MAX_PER_FRAME = 12; // avoid frame drops
+  let added = 0;
+  const batchFn = () => {
+    const batchSize = Math.min(MAX_PER_FRAME, count - added);
+    for (let i = 0; i < batchSize; i++) {
+      if (!addNode()) break;
+      added++;
+    }
+    if (added < count) requestAnimationFrame(batchFn);
+  };
+  batchFn();
+}
+
+// ── UI buttons ────────────────────────────────────────────────────────────────
+document.getElementById('btnAdd').addEventListener('click', () => {
+  addNode();
+});
+
+document.getElementById('btnAddMany').addEventListener('click', () => {
+  addManyNodes(50);
 });
 
 document.getElementById('btnReset').addEventListener('click', () => {
