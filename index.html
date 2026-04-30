@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>3D Force-Directed Network</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
+    body {
+      background: radial-gradient(ellipse at center, #0d1226 0%, #05060d 70%);
+      overflow: hidden;
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      color: #e6e9f2;
+    }
+    canvas { display: block; }
+    #ui {
+      position: fixed; top: 24px; left: 28px;
+      pointer-events: none;
+      letter-spacing: 0.02em;
+    }
+    #ui .title {
+      font-size: 13px; font-weight: 600;
+      color: #fff;
+      text-transform: uppercase;
+      letter-spacing: 0.18em;
+      margin-bottom: 4px;
+    }
+    #ui .subtitle {
+      font-size: 11px; color: #7c8aa8;
+      font-weight: 400;
+    }
+    #ui .hint {
+      margin-top: 14px;
+      font-size: 10px; color: #5a6480;
+      letter-spacing: 0.08em;
+      line-height: 1.7;
+    }
+    #ui .hint span { color: #aebbd8; }
+    #controls {
+      position: fixed; top: 24px; right: 28px;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    button {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.10);
+      color: #c5cee0;
+      padding: 8px 18px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      border-radius: 2px;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s ease;
+    }
+    button:hover {
+      background: rgba(255,255,255,0.10);
+      border-color: rgba(255,255,255,0.25);
+      color: #fff;
+    }
+    #stats {
+      position: fixed; bottom: 24px; left: 28px;
+      color: #4a5474;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      pointer-events: none;
+      font-variant-numeric: tabular-nums;
+    }
+    #settings {
+      position: fixed; top: 24px; right: 28px;
+      width: 220px;
+      display: flex; flex-direction: column; gap: 14px;
+      padding: 18px;
+      background: rgba(10, 14, 28, 0.55);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 4px;
+      backdrop-filter: blur(12px);
+    }
+    #settings .group { display: flex; flex-direction: column; gap: 8px; }
+    #settings .label {
+      font-size: 9px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #6c7a99;
+      font-weight: 500;
+    }
+    #settings .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    #settings .value {
+      font-size: 10px; color: #aebbd8; font-variant-numeric: tabular-nums;
+      min-width: 32px; text-align: right;
+    }
+    #settings .btn-row { display: flex; flex-direction: column; gap: 6px; }
+    #settings button {
+      padding: 7px 12px; font-size: 10px;
+    }
+    .palette-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    }
+    .palette-chip {
+      display: flex; flex-direction: column; align-items: stretch;
+      padding: 6px 8px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      gap: 5px;
+    }
+    .palette-chip:hover { background: rgba(255,255,255,0.07); }
+    .palette-chip.active {
+      border-color: rgba(255,255,255,0.45);
+      background: rgba(255,255,255,0.08);
+    }
+    .palette-chip .name {
+      font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: #c5cee0;
+    }
+    .palette-chip .swatches {
+      display: flex; gap: 2px; height: 6px;
+    }
+    .palette-chip .swatches span {
+      flex: 1; border-radius: 1px;
+    }
+    /* custom range styling */
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      width: 100%; height: 3px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 2px; outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 12px; height: 12px;
+      background: #c5cee0;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: transform 0.1s;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+    /* toggle */
+    .toggle {
+      position: relative;
+      width: 32px; height: 18px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle::after {
+      content: ''; position: absolute;
+      top: 2px; left: 2px;
+      width: 14px; height: 14px;
+      background: #c5cee0;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle.on { background: rgba(120,180,255,0.4); }
+    .toggle.on::after { transform: translateX(14px); background: #fff; }
+  </style>
+</head>
+<body>
+<div id="ui">
+  <div class="title">Network · 3D</div>
+  <div class="subtitle">Directed force-graph · animated signal flow</div>
+  <div class="hint">
+    <span>drag</span> orbit &nbsp; <span>scroll</span> zoom &nbsp; <span>right-drag</span> pan<br>
+    <span>hover</span> isolate connections
+  </div>
+</div>
+<div id="settings">
+  <div class="group">
+    <div class="label">Actions</div>
+    <div class="btn-row">
+      <button id="btnFit">Fit View</button>
+      <button id="btnAdd">Add Node</button>
+      <button id="btnReset">Reset</button>
+      <button id="btnFreeze">Freeze</button>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="row">
+      <span class="label">Stars</span>
+      <div id="toggleStars" class="toggle on"></div>
+    </div>
+  </div>
+
+  <div class="group">
+    <div class="row">
+      <span class="label">Glow</span>
+      <span id="glowValue" class="value">0.85</span>
+    </div>
+    <input id="glowSlider" type="range" min="0" max="2" step="0.05" value="0.85" />
+  </div>
+
+  <div class="group">
+    <div class="label">Palette</div>
+    <div id="paletteGrid" class="palette-grid"></div>
+  </div>
+</div>
+<div id="stats"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ── scene setup ──────────────────────────────────────────────────────────────
+const BG_COLOR = 0x05060d;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.setClearColor(BG_COLOR, 1);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+// very gentle fog — only affects the starfield backdrop, not graph nodes
+scene.fog = new THREE.Fog(BG_COLOR, 350, 900);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 1500);
+camera.position.set(0, 30, 240);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 30;
+controls.maxDistance = 800;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.25;
+
+// ── lighting (cool key + warm fill + rim) ────────────────────────────────────
+scene.add(new THREE.AmbientLight(0x404a66, 1.2));
+const key = new THREE.DirectionalLight(0xa6c8ff, 1.4);
+key.position.set(80, 100, 60);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0xffb380, 0.6);
+fill.position.set(-100, -40, 40);
+scene.add(fill);
+const rim = new THREE.DirectionalLight(0xc8b0ff, 0.8);
+rim.position.set(0, -20, -120);
+scene.add(rim);
+
+// ── post-processing (bloom) ──────────────────────────────────────────────────
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  0.85,   // strength
+  0.55,   // radius
+  0.18,   // threshold
+);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+
+// ── starfield backdrop (subtle depth cue) ────────────────────────────────────
+let starfield;
+{
+  const starGeo = new THREE.BufferGeometry();
+  const STAR_COUNT = 1400;
+  const positions = new Float32Array(STAR_COUNT * 3);
+  const colors    = new Float32Array(STAR_COUNT * 3);
+  const tmpC = new THREE.Color();
+  for (let i = 0; i < STAR_COUNT; i++) {
+    const r = 320 + Math.random() * 220;
+    const t = Math.random() * Math.PI * 2;
+    const p = Math.acos(2 * Math.random() - 1);
+    positions[i*3+0] = r * Math.sin(p) * Math.cos(t);
+    positions[i*3+1] = r * Math.sin(p) * Math.sin(t);
+    positions[i*3+2] = r * Math.cos(p);
+    const tint = 0.55 + Math.random() * 0.45;
+    tmpC.setHSL(0.58 + (Math.random() - 0.5) * 0.1, 0.25, tint * 0.6);
+    colors[i*3+0] = tmpC.r;
+    colors[i*3+1] = tmpC.g;
+    colors[i*3+2] = tmpC.b;
+  }
+  starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  starGeo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+  const starMat = new THREE.PointsMaterial({
+    size: 1.4,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.85,
+    depthWrite: false,
+  });
+  starfield = new THREE.Points(starGeo, starMat);
+  scene.add(starfield);
+}
+
+// ── graph data ───────────────────────────────────────────────────────────────
+// curated palettes: each set has 6 distinct, balanced-luminance hues
+const PALETTES = {
+  aurora: {
+    label: 'Aurora',
+    colors: [0x60a5fa, 0xf472b6, 0x34d399, 0xfbbf24, 0xa78bfa, 0x22d3ee],
+  },
+  sunset: {
+    label: 'Sunset',
+    colors: [0xff7e5f, 0xfeb47b, 0xff5e62, 0xffc371, 0xc56cf0, 0xf6416c],
+  },
+  ocean: {
+    label: 'Ocean',
+    colors: [0x4cc9f0, 0x4895ef, 0x4361ee, 0x7dd3fc, 0x06b6d4, 0x2dd4bf],
+  },
+  neon: {
+    label: 'Neon',
+    colors: [0xff00ff, 0x00ffff, 0xbeff00, 0xff3366, 0xffd700, 0x00ff9f],
+  },
+};
+let currentPaletteKey = 'aurora';
+let CLUSTER_COLORS = PALETTES[currentPaletteKey].colors.slice();
+const NUM_CLUSTERS = 6;
+
+let nodes = [];
+let edges = [];
+let clusters = [];   // { id, color, hull:Mesh, centroid:Vector3 }
+let frozen = false;
+let nodeIdCounter = 0;
+
+function randInSphere(r) {
+  // uniform random point inside sphere
+  const u = Math.random(), v = Math.random(), w = Math.random();
+  const theta = 2 * Math.PI * u;
+  const phi = Math.acos(2 * v - 1);
+  const rad = r * Math.cbrt(w);
+  return new THREE.Vector3(
+    rad * Math.sin(phi) * Math.cos(theta),
+    rad * Math.sin(phi) * Math.sin(theta),
+    rad * Math.cos(phi),
+  );
+}
+
+const sphereGeo = new THREE.IcosahedronGeometry(1, 4);
+
+function makeCluster(id) {
+  const color = CLUSTER_COLORS[id % CLUSTER_COLORS.length];
+  // soft volumetric glow sprite (replaces opaque hull mesh)
+  const aura = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: makeGlowTexture(color, 0.45),
+    color: 0xffffff,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    opacity: 0.55,
+    depthWrite: false,
+    depthTest: true,
+  }));
+  aura.scale.setScalar(40);
+  scene.add(aura);
+  const c = { id, color, aura, centroid: new THREE.Vector3(), radius: 0 };
+  clusters.push(c);
+  return c;
+}
+
+function makeGlowTexture(color, softness = 0.3) {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const hex = '#' + color.toString(16).padStart(6, '0');
+  const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  g.addColorStop(0,        hex + 'ff');
+  g.addColorStop(softness, hex + 'aa');
+  g.addColorStop(0.55,     hex + '33');
+  g.addColorStop(1,        hex + '00');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function makeNode(pos, cluster) {
+  const color = cluster.color;
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: color,
+    emissiveIntensity: 1.4,
+    roughness: 0.25,
+    metalness: 0.15,
+  });
+  const mesh = new THREE.Mesh(sphereGeo, mat);
+  mesh.position.copy(pos);
+  mesh.scale.setScalar(1.3);
+  scene.add(mesh);
+
+  const spriteMat = new THREE.SpriteMaterial({
+    map: makeGlowTexture(color, 0.25),
+    color: 0xffffff,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    opacity: 0.9,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.setScalar(7);
+  mesh.add(sprite);
+
+  const node = {
+    id: nodeIdCounter++,
+    cluster,
+    pos: pos.clone(),
+    vel: new THREE.Vector3(),
+    acc: new THREE.Vector3(),
+    mesh,
+    baseColor: color,
+  };
+  mesh.userData.node = node;
+  nodes.push(node);
+  return node;
+}
+
+function makeEdge(a, b) {
+  const intra = a.cluster === b.cluster;
+  const col = intra
+    ? new THREE.Color(a.cluster.color).multiplyScalar(1.1)
+    : new THREE.Color(0xb8c4d8);
+  const points = [a.pos.clone(), b.pos.clone()];
+  const geo = new THREE.BufferGeometry().setFromPoints(points);
+  const mat = new THREE.LineBasicMaterial({
+    color: col,
+    transparent: true,
+    opacity: intra ? 0.55 : 0.25,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    fog: true,
+  });
+  const line = new THREE.Line(geo, mat);
+  scene.add(line);
+  const edge = { a, b, line, intra };
+  edges.push(edge);
+  return edge;
+}
+
+// ── initial graph ─────────────────────────────────────────────────────────────
+function buildGraph() {
+  nodes.forEach(n => { scene.remove(n.mesh); n.mesh.material.dispose(); });
+  edges.forEach(e => { scene.remove(e.line); e.line.geometry.dispose(); e.line.material.dispose(); });
+  clusters.forEach(c => { scene.remove(c.aura); c.aura.material.dispose(); });
+  nodes = []; edges = []; clusters = []; nodeIdCounter = 0;
+
+  // spread cluster seeds around a sphere
+  for (let ci = 0; ci < NUM_CLUSTERS; ci++) makeCluster(ci);
+
+  const clusterSeeds = clusters.map((_, ci) => {
+    const angle  = (ci / NUM_CLUSTERS) * Math.PI * 2;
+    const pitch  = (Math.random() - 0.5) * Math.PI * 0.6;
+    const r = 42;
+    return new THREE.Vector3(
+      r * Math.cos(pitch) * Math.cos(angle),
+      r * Math.sin(pitch),
+      r * Math.cos(pitch) * Math.sin(angle),
+    );
+  });
+
+  const nodesPerCluster = 13;
+  clusters.forEach((cluster, ci) => {
+    for (let i = 0; i < nodesPerCluster; i++) {
+      const pos = clusterSeeds[ci].clone().add(randInSphere(12));
+      makeNode(pos, cluster);
+    }
+  });
+
+  // intra-cluster: dense spanning tree + extra edges
+  clusters.forEach((cluster) => {
+    const cn = nodes.filter(n => n.cluster === cluster).sort(() => Math.random() - 0.5);
+    for (let i = 1; i < cn.length; i++) makeEdge(cn[i - 1], cn[i]);
+    const extra = Math.floor(cn.length * 1.4);
+    for (let k = 0; k < extra; k++) {
+      const a = cn[Math.floor(Math.random() * cn.length)];
+      const b = cn[Math.floor(Math.random() * cn.length)];
+      if (a !== b && !edgeExists(a, b)) makeEdge(a, b);
+    }
+  });
+
+  // inter-cluster: 2–3 bridge edges per cluster pair
+  for (let i = 0; i < clusters.length; i++) {
+    for (let j = i + 1; j < clusters.length; j++) {
+      if (Math.random() > 0.55) continue; // ~45% chance of bridge
+      const ca = nodes.filter(n => n.cluster === clusters[i]);
+      const cb = nodes.filter(n => n.cluster === clusters[j]);
+      const bridges = 1 + Math.floor(Math.random() * 2);
+      for (let k = 0; k < bridges; k++) {
+        const a = ca[Math.floor(Math.random() * ca.length)];
+        const b = cb[Math.floor(Math.random() * cb.length)];
+        if (!edgeExists(a, b)) makeEdge(a, b);
+      }
+    }
+  }
+}
+
+function edgeExists(a, b) {
+  return edges.some(e => (e.a === a && e.b === b) || (e.a === b && e.b === a));
+}
+
+// drive cluster aura sprites — soft glow tracking each cluster's centroid
+function updateHulls() {
+  clusters.forEach(cluster => {
+    const cn = nodes.filter(n => n.cluster === cluster);
+    if (!cn.length) return;
+    const c = new THREE.Vector3();
+    cn.forEach(n => c.add(n.pos));
+    c.divideScalar(cn.length);
+    cluster.centroid.copy(c);
+
+    let maxR = 0;
+    cn.forEach(n => { maxR = Math.max(maxR, c.distanceTo(n.pos)); });
+    cluster.radius = maxR;
+
+    cluster.aura.position.copy(c);
+    cluster.aura.scale.setScalar((maxR + 6) * 2.4);
+  });
+}
+
+// re-tint the entire graph in place when the palette changes
+function applyPalette(key) {
+  if (!PALETTES[key]) return;
+  currentPaletteKey = key;
+  CLUSTER_COLORS = PALETTES[key].colors.slice();
+
+  clusters.forEach((cluster, i) => {
+    const color = CLUSTER_COLORS[i % CLUSTER_COLORS.length];
+    cluster.color = color;
+
+    // refresh aura sprite texture
+    cluster.aura.material.map.dispose();
+    cluster.aura.material.map = makeGlowTexture(color, 0.45);
+    cluster.aura.material.needsUpdate = true;
+  });
+
+  nodes.forEach(n => {
+    const color = n.cluster.color;
+    n.baseColor = color;
+    n.mesh.material.emissive.setHex(color);
+    // replace glow sprite texture
+    const sprite = n.mesh.children.find(c => c.isSprite);
+    if (sprite) {
+      sprite.material.map.dispose();
+      sprite.material.map = makeGlowTexture(color, 0.25);
+      sprite.material.needsUpdate = true;
+    }
+  });
+
+  edges.forEach(e => {
+    const col = e.intra
+      ? new THREE.Color(e.a.cluster.color).multiplyScalar(1.1)
+      : new THREE.Color(0xb8c4d8);
+    e.line.material.color.copy(col);
+  });
+}
+
+// compute graph bounding sphere and place camera so the whole network fits
+function fitCameraToGraph(margin = 1.35) {
+  if (!nodes.length) return;
+  const center = new THREE.Vector3();
+  nodes.forEach(n => center.add(n.pos));
+  center.divideScalar(nodes.length);
+
+  let maxR = 0;
+  nodes.forEach(n => { maxR = Math.max(maxR, center.distanceTo(n.pos)); });
+  maxR += 8; // node halo padding
+
+  const fov = camera.fov * Math.PI / 180;
+  const distV = (maxR * margin) / Math.tan(fov / 2);
+  const distH = distV / camera.aspect;
+  const dist  = Math.max(distV, distH);
+
+  // direction from current target → camera, preserved so user's orbit angle stays
+  const dir = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+  if (dir.lengthSq() < 0.001) dir.set(0, 0.15, 1).normalize();
+
+  controls.target.copy(center);
+  camera.position.copy(center).addScaledVector(dir, dist);
+  camera.near = Math.max(0.1, dist * 0.01);
+  camera.far  = dist * 8;
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+// run the physics headless so the layout is settled before render
+function prewarmSimulation(iterations = 350) {
+  const wasFrozen = frozen;
+  frozen = false;
+  for (let i = 0; i < iterations; i++) simulate();
+  frozen = wasFrozen;
+}
+
+// ── force simulation ──────────────────────────────────────────────────────────
+const REPULSION        = 420;
+const SPRING_LEN_INTRA = 10;
+const SPRING_LEN_INTER = 55;
+const SPRING_K_INTRA   = 0.06;
+const SPRING_K_INTER   = 0.018;
+const DAMPING          = 0.80;
+const CENTER_K         = 0.003;
+const DT               = 0.52;
+
+function simulate() {
+  if (frozen || nodes.length === 0) return;
+
+  nodes.forEach(n => n.acc.set(0, 0, 0));
+
+  const tmp = new THREE.Vector3();
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      tmp.subVectors(a.pos, b.pos);
+      const distSq = Math.max(tmp.lengthSq(), 0.01);
+      const force = REPULSION / distSq;
+      tmp.normalize().multiplyScalar(force);
+      a.acc.add(tmp);
+      b.acc.sub(tmp);
+    }
+  }
+
+  edges.forEach(({ a, b, intra }) => {
+    tmp.subVectors(b.pos, a.pos);
+    const dist = tmp.length();
+    const restLen = intra ? SPRING_LEN_INTRA : SPRING_LEN_INTER;
+    const k       = intra ? SPRING_K_INTRA   : SPRING_K_INTER;
+    const force   = k * (dist - restLen);
+    tmp.normalize().multiplyScalar(force);
+    a.acc.add(tmp);
+    b.acc.sub(tmp);
+  });
+
+  nodes.forEach(n => n.acc.addScaledVector(n.pos, -CENTER_K));
+
+  nodes.forEach(n => {
+    n.vel.addScaledVector(n.acc, DT);
+    n.vel.multiplyScalar(DAMPING);
+    n.pos.addScaledVector(n.vel, DT);
+    n.mesh.position.copy(n.pos);
+  });
+
+  edges.forEach(({ a, b, line }) => {
+    const pos = line.geometry.attributes.position;
+    pos.setXYZ(0, a.pos.x, a.pos.y, a.pos.z);
+    pos.setXYZ(1, b.pos.x, b.pos.y, b.pos.z);
+    pos.needsUpdate = true;
+    line.geometry.computeBoundingSphere();
+  });
+
+  updateHulls();
+}
+
+// ── directed signal pulses ────────────────────────────────────────────────────
+// edges already carry direction (a → b). animate small light pulses traveling
+// from source to target so the directionality reads visually.
+function makePulseTexture() {
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  g.addColorStop(0,    'rgba(255,255,255,1)');
+  g.addColorStop(0.25, 'rgba(255,255,255,0.7)');
+  g.addColorStop(0.55, 'rgba(255,255,255,0.15)');
+  g.addColorStop(1,    'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const PULSE_TEX = makePulseTexture();
+const PULSE_POOL_SIZE = 220;
+const pulses = [];
+for (let i = 0; i < PULSE_POOL_SIZE; i++) {
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: PULSE_TEX,
+    color: 0xffffff,
+    blending: THREE.AdditiveBlending,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  }));
+  sprite.visible = false;
+  scene.add(sprite);
+  pulses.push({ sprite, active: false, edge: null, t: 0, speed: 1 });
+}
+
+const PULSE_TARGET_POPULATION = 90;   // roughly how many pulses in flight
+const PULSE_BASE_SPEED        = 0.55; // travel rate (1.0 = whole edge per second)
+
+function spawnPulse() {
+  if (!edges.length) return;
+  const free = pulses.find(p => !p.active);
+  if (!free) return;
+  const edge = edges[Math.floor(Math.random() * edges.length)];
+  free.active = true;
+  free.edge   = edge;
+  free.t      = 0;
+  free.speed  = PULSE_BASE_SPEED * (0.7 + Math.random() * 0.8);
+
+  const col = edge.intra
+    ? new THREE.Color(edge.a.cluster.color)
+    : new THREE.Color(0xeaf2ff);
+  free.sprite.material.color.copy(col);
+  free.sprite.visible = true;
+}
+
+const _pulseTmp = new THREE.Vector3();
+function updatePulses(dt) {
+  // top up the population
+  let activeCount = 0;
+  pulses.forEach(p => { if (p.active) activeCount++; });
+  const deficit = PULSE_TARGET_POPULATION - activeCount;
+  // spawn a few per frame, scaled by deficit
+  const spawnThisFrame = Math.min(8, Math.max(0, Math.ceil(deficit * 0.05)));
+  for (let i = 0; i < spawnThisFrame; i++) spawnPulse();
+
+  pulses.forEach(p => {
+    if (!p.active) return;
+    p.t += dt * p.speed;
+    if (p.t >= 1) {
+      p.active = false;
+      p.sprite.visible = false;
+      return;
+    }
+    _pulseTmp.lerpVectors(p.edge.a.pos, p.edge.b.pos, p.t);
+    p.sprite.position.copy(_pulseTmp);
+
+    // bell-curve brightness: ramp in, peak mid-edge, ramp out
+    const envelope = Math.sin(p.t * Math.PI);
+    p.sprite.material.opacity = envelope;
+    p.sprite.scale.setScalar(1.6 + envelope * 2.2);
+  });
+}
+
+// build, settle, and frame the initial graph
+buildGraph();
+prewarmSimulation();
+fitCameraToGraph();
+
+// ── hover / highlight ─────────────────────────────────────────────────────────
+const raycaster = new THREE.Raycaster();
+raycaster.params.Points.threshold = 2;
+const mouse = new THREE.Vector2(-9999, -9999);
+let hoveredNode = null;
+
+const meshList = () => nodes.map(n => n.mesh);
+
+function onMouseMove(e) {
+  mouse.x =  (e.clientX / innerWidth)  * 2 - 1;
+  mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+}
+window.addEventListener('mousemove', onMouseMove);
+
+function updateHover() {
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(meshList());
+
+  const hit = hits.length > 0 ? hits[0].object.userData.node : null;
+  if (hit === hoveredNode) return;
+
+  // restore previous
+  if (hoveredNode) {
+    nodes.forEach(n => {
+      n.mesh.material.emissiveIntensity = 1.4;
+      n.mesh.scale.setScalar(1.3);
+    });
+    edges.forEach(e => {
+      const col = e.intra
+        ? new THREE.Color(e.a.cluster.color).multiplyScalar(1.1)
+        : new THREE.Color(0xb8c4d8);
+      e.line.material.color.copy(col);
+      e.line.material.opacity = e.intra ? 0.55 : 0.25;
+    });
+  }
+
+  hoveredNode = hit;
+  document.body.style.cursor = hoveredNode ? 'pointer' : 'default';
+  if (hoveredNode) {
+    // dim all
+    nodes.forEach(n => {
+      n.mesh.material.emissiveIntensity = 0.25;
+      n.mesh.scale.setScalar(1.1);
+    });
+    edges.forEach(e => { e.line.material.opacity = 0.06; });
+
+    // highlight self
+    hoveredNode.mesh.material.emissiveIntensity = 3.0;
+    hoveredNode.mesh.scale.setScalar(2.0);
+
+    // highlight neighbors + edges
+    edges.forEach(e => {
+      const isConnected = e.a === hoveredNode || e.b === hoveredNode;
+      if (isConnected) {
+        e.line.material.color.setHex(0xffffff);
+        e.line.material.opacity = 1.0;
+        const neighbor = e.a === hoveredNode ? e.b : e.a;
+        neighbor.mesh.material.emissiveIntensity = 2.2;
+        neighbor.mesh.scale.setScalar(1.6);
+      }
+    });
+  }
+}
+
+// pause auto-rotate while the user interacts
+controls.addEventListener('start', () => { controls.autoRotate = false; });
+
+// ── UI buttons ────────────────────────────────────────────────────────────────
+document.getElementById('btnAdd').addEventListener('click', () => {
+  if (nodes.length >= 120) return;
+  // assign to smallest cluster
+  const clusterSizes = clusters.map(c => nodes.filter(n => n.cluster === c).length);
+  const ci = clusterSizes.indexOf(Math.min(...clusterSizes));
+  const cluster = clusters[ci];
+  const pos = cluster.centroid.clone().add(randInSphere(14));
+  const newNode = makeNode(pos, cluster);
+  const peers = nodes.filter(n => n.cluster === cluster && n !== newNode).sort(() => Math.random() - 0.5);
+  const count = Math.min(peers.length, 2 + Math.floor(Math.random() * 2));
+  for (let i = 0; i < count; i++) makeEdge(newNode, peers[i]);
+});
+
+document.getElementById('btnReset').addEventListener('click', () => {
+  buildGraph();
+  prewarmSimulation();
+  fitCameraToGraph();
+});
+
+document.getElementById('btnFit').addEventListener('click', () => fitCameraToGraph());
+
+// stars toggle
+const toggleStars = document.getElementById('toggleStars');
+toggleStars.addEventListener('click', () => {
+  const on = !toggleStars.classList.contains('on');
+  toggleStars.classList.toggle('on', on);
+  starfield.visible = on;
+});
+
+// glow intensity → bloom strength
+const glowSlider = document.getElementById('glowSlider');
+const glowValue  = document.getElementById('glowValue');
+glowSlider.addEventListener('input', () => {
+  const v = parseFloat(glowSlider.value);
+  bloomPass.strength = v;
+  glowValue.textContent = v.toFixed(2);
+});
+
+// palette picker — render chips and wire selection
+const paletteGrid = document.getElementById('paletteGrid');
+function renderPaletteChips() {
+  paletteGrid.innerHTML = '';
+  Object.entries(PALETTES).forEach(([key, p]) => {
+    const chip = document.createElement('div');
+    chip.className = 'palette-chip' + (key === currentPaletteKey ? ' active' : '');
+    chip.dataset.key = key;
+    const swatches = p.colors
+      .map(c => `<span style="background:#${c.toString(16).padStart(6,'0')}"></span>`)
+      .join('');
+    chip.innerHTML = `<div class="name">${p.label}</div><div class="swatches">${swatches}</div>`;
+    chip.addEventListener('click', () => {
+      applyPalette(key);
+      paletteGrid.querySelectorAll('.palette-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+    });
+    paletteGrid.appendChild(chip);
+  });
+}
+renderPaletteChips();
+
+const btnFreeze = document.getElementById('btnFreeze');
+btnFreeze.addEventListener('click', () => {
+  frozen = !frozen;
+  btnFreeze.textContent = frozen ? 'Resume' : 'Freeze';
+});
+
+// ── resize ────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  bloomPass.setSize(innerWidth, innerHeight);
+  fitCameraToGraph();
+});
+
+// ── render loop ───────────────────────────────────────────────────────────────
+const stats = document.getElementById('stats');
+let frame = 0;
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = clock.getDelta();
+
+  simulate();
+  updatePulses(dt);
+  updateHover();
+  controls.update();
+
+  composer.render();
+
+  if (++frame % 30 === 0) {
+    stats.textContent = `${nodes.length} nodes · ${edges.length} edges · ${NUM_CLUSTERS} clusters · ${Math.round(1/dt)} fps`;
+  }
+}
+
+animate();
+</script>
+</body>
+</html>
