@@ -36,8 +36,9 @@
       transition: opacity 0.25s ease;
       margin-top: -2px;
     }
-    body.no-cluster-labels .cluster-label { opacity: 0; }
-    body.no-node-labels    .node-label    { opacity: 0; }
+    /* opacity is driven by JS for fog fade; CSS only handles visibility on/off */
+    body.no-cluster-labels .cluster-label,
+    body.no-node-labels    .node-label    { display: none; }
     #ui {
       position: fixed; top: 24px; left: 28px;
       pointer-events: none;
@@ -1474,6 +1475,43 @@ const stats = document.getElementById('stats');
 let frame = 0;
 const clock = new THREE.Clock();
 
+// fade label opacity AND scale font size by distance from camera. Closer = bigger
+// and crisper, further = smaller and dimmer (depth cue + focus on what's near).
+const CLUSTER_FOG_NEAR = 250;
+const CLUSTER_FOG_FAR  = 800;
+const NODE_FOG_NEAR    = 120;
+const NODE_FOG_FAR     = 400;
+const CLUSTER_BASE_PX  = 11;
+const NODE_BASE_PX     = 9;
+const CLUSTER_SCALE_RANGE = [0.7, 1.4]; // [min, max] multiplier
+const NODE_SCALE_RANGE    = [0.6, 1.8];
+const _labelTmp = new THREE.Vector3();
+
+function updateLabelFog() {
+  const camPos = camera.position;
+  const cRange = CLUSTER_FOG_FAR - CLUSTER_FOG_NEAR;
+  const nRange = NODE_FOG_FAR    - NODE_FOG_NEAR;
+
+  clusters.forEach(c => {
+    if (!c.labelDiv) return;
+    const dist = camPos.distanceTo(c.label.position);
+    const t = Math.max(0, Math.min(1, (CLUSTER_FOG_FAR - dist) / cRange));
+    const scale = CLUSTER_SCALE_RANGE[0] + t * (CLUSTER_SCALE_RANGE[1] - CLUSTER_SCALE_RANGE[0]);
+    c.labelDiv.style.opacity = t;
+    c.labelDiv.style.fontSize = (CLUSTER_BASE_PX * scale).toFixed(1) + 'px';
+  });
+
+  nodes.forEach(n => {
+    if (!n.labelDiv) return;
+    n.label.getWorldPosition(_labelTmp);
+    const dist = camPos.distanceTo(_labelTmp);
+    const t = Math.max(0, Math.min(1, (NODE_FOG_FAR - dist) / nRange));
+    const scale = NODE_SCALE_RANGE[0] + t * (NODE_SCALE_RANGE[1] - NODE_SCALE_RANGE[0]);
+    n.labelDiv.style.opacity = t;
+    n.labelDiv.style.fontSize = (NODE_BASE_PX * scale).toFixed(1) + 'px';
+  });
+}
+
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
@@ -1483,6 +1521,7 @@ function animate() {
   updateViewTransition(dt);
   updateHover();
   controls.update();
+  updateLabelFog();
 
   composer.render();
   labelRenderer.render(scene, camera);
