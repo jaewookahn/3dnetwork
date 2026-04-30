@@ -13,6 +13,31 @@
       color: #e6e9f2;
     }
     canvas { display: block; }
+    .cluster-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      text-shadow: 0 0 10px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,1);
+      pointer-events: none;
+      white-space: nowrap;
+      user-select: none;
+      transition: opacity 0.25s ease;
+    }
+    .node-label {
+      font-size: 9px;
+      color: #c0cce0;
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 6px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,1);
+      pointer-events: none;
+      white-space: nowrap;
+      user-select: none;
+      font-variant-numeric: tabular-nums;
+      transition: opacity 0.25s ease;
+      margin-top: -2px;
+    }
+    body.no-cluster-labels .cluster-label { opacity: 0; }
+    body.no-node-labels    .node-label    { opacity: 0; }
     #ui {
       position: fixed; top: 24px; left: 28px;
       pointer-events: none;
@@ -237,9 +262,18 @@
   </div>
 
   <div class="group">
+    <div class="label">Display</div>
     <div class="row">
-      <span class="label">Stars</span>
+      <span class="label-sm">Stars</span>
       <div id="toggleStars" class="toggle on"></div>
+    </div>
+    <div class="row">
+      <span class="label-sm">Cluster Labels</span>
+      <div id="toggleClusterLabels" class="toggle on"></div>
+    </div>
+    <div class="row">
+      <span class="label-sm">Node Labels</span>
+      <div id="toggleNodeLabels" class="toggle"></div>
     </div>
   </div>
 
@@ -332,6 +366,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 // ── scene setup ──────────────────────────────────────────────────────────────
 const BG_COLOR = 0x05060d;
@@ -343,6 +378,16 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.setClearColor(BG_COLOR, 1);
 document.body.appendChild(renderer.domElement);
+
+// CSS2D renderer for crisp HTML labels overlaid on the 3D scene
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.setSize(innerWidth, innerHeight);
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+labelRenderer.domElement.style.zIndex = '5';
+document.body.appendChild(labelRenderer.domElement);
 
 const scene = new THREE.Scene();
 // very gentle fog — only affects the starfield backdrop, not graph nodes
@@ -442,6 +487,10 @@ let currentPaletteKey = 'aurora';
 let CLUSTER_COLORS = PALETTES[currentPaletteKey].colors.slice();
 const NUM_CLUSTERS = 6;
 
+// thematic cluster names — read like a service topology
+const CLUSTER_NAMES  = ['Web', 'API', 'Auth', 'Cache', 'Queue', 'Storage'];
+const CLUSTER_PREFIX = ['web', 'api', 'auth', 'cache', 'queue', 'store'];
+
 let nodes = [];
 let edges = [];
 let clusters = [];   // { id, color, hull:Mesh, centroid:Vector3 }
@@ -465,6 +514,7 @@ const sphereGeo = new THREE.IcosahedronGeometry(1, 4);
 
 function makeCluster(id) {
   const color = CLUSTER_COLORS[id % CLUSTER_COLORS.length];
+  const name  = CLUSTER_NAMES[id % CLUSTER_NAMES.length];
   // soft volumetric glow sprite (replaces opaque hull mesh)
   const aura = new THREE.Sprite(new THREE.SpriteMaterial({
     map: makeGlowTexture(color, 0.45),
@@ -477,7 +527,18 @@ function makeCluster(id) {
   }));
   aura.scale.setScalar(40);
   scene.add(aura);
-  const c = { id, color, aura, centroid: new THREE.Vector3(), radius: 0 };
+
+  // CSS2D label floating above the cluster
+  const labelDiv = document.createElement('div');
+  labelDiv.className = 'cluster-label';
+  labelDiv.textContent = name;
+  labelDiv.style.color = '#' + color.toString(16).padStart(6, '0');
+  const label = new CSS2DObject(labelDiv);
+  scene.add(label);
+
+  const c = { id, color, name, aura, label, labelDiv,
+              centroid: new THREE.Vector3(), radius: 0,
+              nodeCount: 0 };
   clusters.push(c);
   return c;
 }
@@ -526,13 +587,29 @@ function makeNode(pos, cluster) {
   sprite.scale.setScalar(7);
   mesh.add(sprite);
 
+  // generate node name like "web-01", "api-03" using cluster prefix
+  cluster.nodeCount = (cluster.nodeCount || 0) + 1;
+  const prefix = CLUSTER_PREFIX[cluster.id % CLUSTER_PREFIX.length];
+  const name   = `${prefix}-${String(cluster.nodeCount).padStart(2, '0')}`;
+
+  // CSS2D label as a child of the mesh (auto-tracks node position)
+  const labelDiv = document.createElement('div');
+  labelDiv.className = 'node-label';
+  labelDiv.textContent = name;
+  const label = new CSS2DObject(labelDiv);
+  label.position.set(0, 1.6, 0);
+  mesh.add(label);
+
   const node = {
     id: nodeIdCounter++,
+    name,
     cluster,
     pos: pos.clone(),
     vel: new THREE.Vector3(),
     acc: new THREE.Vector3(),
     mesh,
+    label,
+    labelDiv,
     baseColor: color,
   };
   mesh.userData.node = node;
@@ -564,9 +641,17 @@ function makeEdge(a, b) {
 
 // ── initial graph ─────────────────────────────────────────────────────────────
 function buildGraph() {
-  nodes.forEach(n => { scene.remove(n.mesh); n.mesh.material.dispose(); });
+  nodes.forEach(n => {
+    if (n.label) n.mesh.remove(n.label);
+    if (n.labelDiv?.parentNode) n.labelDiv.parentNode.removeChild(n.labelDiv);
+    scene.remove(n.mesh); n.mesh.material.dispose();
+  });
   edges.forEach(e => { scene.remove(e.line); e.line.geometry.dispose(); e.line.material.dispose(); });
-  clusters.forEach(c => { scene.remove(c.aura); c.aura.material.dispose(); });
+  clusters.forEach(c => {
+    if (c.label) scene.remove(c.label);
+    if (c.labelDiv?.parentNode) c.labelDiv.parentNode.removeChild(c.labelDiv);
+    scene.remove(c.aura); c.aura.material.dispose();
+  });
   nodes = []; edges = []; clusters = []; nodeIdCounter = 0;
 
   // spread cluster seeds around a sphere
@@ -639,6 +724,11 @@ function updateHulls() {
 
     cluster.aura.position.copy(c);
     cluster.aura.scale.setScalar((maxR + 6) * 2.4);
+
+    // float the cluster label above the cluster
+    if (cluster.label) {
+      cluster.label.position.set(c.x, c.y + maxR + 6, c.z);
+    }
   });
 }
 
@@ -656,6 +746,11 @@ function applyPalette(key) {
     cluster.aura.material.map.dispose();
     cluster.aura.material.map = makeGlowTexture(color, 0.45);
     cluster.aura.material.needsUpdate = true;
+
+    // recolor cluster label
+    if (cluster.labelDiv) {
+      cluster.labelDiv.style.color = '#' + color.toString(16).padStart(6, '0');
+    }
   });
 
   nodes.forEach(n => {
@@ -1250,6 +1345,22 @@ toggleStars.addEventListener('click', () => {
   starfield.visible = on;
 });
 
+// label toggles — class on body drives CSS visibility on all labels
+document.body.classList.add('no-node-labels'); // node labels off by default
+const toggleClusterLabels = document.getElementById('toggleClusterLabels');
+toggleClusterLabels.addEventListener('click', () => {
+  const on = !toggleClusterLabels.classList.contains('on');
+  toggleClusterLabels.classList.toggle('on', on);
+  document.body.classList.toggle('no-cluster-labels', !on);
+});
+
+const toggleNodeLabels = document.getElementById('toggleNodeLabels');
+toggleNodeLabels.addEventListener('click', () => {
+  const on = !toggleNodeLabels.classList.contains('on');
+  toggleNodeLabels.classList.toggle('on', on);
+  document.body.classList.toggle('no-node-labels', !on);
+});
+
 // cluster auras opacity
 const aurasSlider = document.getElementById('aurasSlider');
 const aurasValue  = document.getElementById('aurasValue');
@@ -1354,6 +1465,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
   bloomPass.setSize(innerWidth, innerHeight);
+  labelRenderer.setSize(innerWidth, innerHeight);
   fitCameraToGraph();
 });
 
@@ -1373,6 +1485,7 @@ function animate() {
   controls.update();
 
   composer.render();
+  labelRenderer.render(scene, camera);
 
   if (++frame % 30 === 0) {
     stats.textContent = `${nodes.length} nodes · ${edges.length} edges · ${NUM_CLUSTERS} clusters · ${Math.round(1/dt)} fps`;
