@@ -347,6 +347,12 @@
       <span id="dampingValue" class="value">0.80</span>
     </div>
     <input id="dampingSlider" type="range" min="0.5" max="0.98" step="0.02" value="0.80" />
+
+    <div class="row">
+      <span class="label-sm">Edge Bundling</span>
+      <span id="curveValue" class="value">0.00</span>
+    </div>
+    <input id="curveSlider" type="range" min="0" max="1" step="0.05" value="0" />
   </div>
 </div>
 <div id="stats"></div>
@@ -618,13 +624,20 @@ function makeNode(pos, cluster) {
   return node;
 }
 
+const EDGE_SEGMENTS = 16;
+let   EDGE_BUNDLING = 0; // β: 0 = straight lines, 1 = full HEB bundling
+
 function makeEdge(a, b) {
   const intra = a.cluster === b.cluster;
   const col = intra
     ? new THREE.Color(a.cluster.color).multiplyScalar(1.1)
     : new THREE.Color(0xb8c4d8);
-  const points = [a.pos.clone(), b.pos.clone()];
-  const geo = new THREE.BufferGeometry().setFromPoints(points);
+
+  // pre-allocated buffer for curve samples (segments + 1 vertices)
+  const positions = new Float32Array((EDGE_SEGMENTS + 1) * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
   const mat = new THREE.LineBasicMaterial({
     color: col,
     transparent: true,
@@ -635,7 +648,17 @@ function makeEdge(a, b) {
   });
   const line = new THREE.Line(geo, mat);
   scene.add(line);
-  const edge = { a, b, line, intra };
+
+  // cubic bezier — control points (v1, v2) routed through cluster centroids
+  // each frame for hierarchical edge bundling à la Holten 2006
+  const curve = new THREE.CubicBezierCurve3(
+    a.pos.clone(),
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+    b.pos.clone(),
+  );
+
+  const edge = { a, b, line, intra, curve, positions };
   edges.push(edge);
   return edge;
 }
@@ -1050,15 +1073,59 @@ function simulate() {
     n.mesh.position.copy(n.pos);
   });
 
-  edges.forEach(({ a, b, line }) => {
-    const pos = line.geometry.attributes.position;
-    pos.setXYZ(0, a.pos.x, a.pos.y, a.pos.z);
-    pos.setXYZ(1, b.pos.x, b.pos.y, b.pos.z);
-    pos.needsUpdate = true;
-    line.geometry.computeBoundingSphere();
-  });
-
+  edges.forEach(updateEdgeCurve);
   updateHulls();
+}
+
+// Hierarchical Edge Bundling (Holten 2006): each edge is a cubic bezier
+// whose two control points are interpolated between the straight-line
+// reference (1/3 and 2/3 along A→B) and the cluster-hierarchy ancestors
+// (cluster centroids). Inter-cluster edges sharing the same source/target
+// clusters route through the same control points, naturally bundling.
+const _edgeT1   = new THREE.Vector3(); // straight-line ref @ t=1/3
+const _edgeT2   = new THREE.Vector3(); // straight-line ref @ t=2/3
+const _edgeSamp = new THREE.Vector3();
+
+function updateEdgeCurve(edge) {
+  const { a, b, line, intra, curve, positions } = edge;
+  const beta = EDGE_BUNDLING;
+
+  curve.v0.copy(a.pos);
+  curve.v3.copy(b.pos);
+
+  // straight-line reference points
+  _edgeT1.lerpVectors(a.pos, b.pos, 1/3);
+  _edgeT2.lerpVectors(a.pos, b.pos, 2/3);
+
+  // bundled control points = ancestor centroids in the 2-level cluster tree
+  let bundled1, bundled2;
+  if (intra && a.cluster) {
+    // siblings share one parent → both controls aim at the cluster centroid
+    bundled1 = a.cluster.centroid;
+    bundled2 = a.cluster.centroid;
+  } else if (a.cluster && b.cluster) {
+    // cross-cluster: route through each endpoint's parent centroid
+    bundled1 = a.cluster.centroid;
+    bundled2 = b.cluster.centroid;
+  } else {
+    bundled1 = _edgeT1;
+    bundled2 = _edgeT2;
+  }
+
+  // β interpolation: 0 → straight, 1 → fully bundled through hierarchy
+  curve.v1.lerpVectors(_edgeT1, bundled1, beta);
+  curve.v2.lerpVectors(_edgeT2, bundled2, beta);
+
+  // sample the curve into the line's position buffer
+  for (let i = 0; i <= EDGE_SEGMENTS; i++) {
+    curve.getPoint(i / EDGE_SEGMENTS, _edgeSamp);
+    const o = i * 3;
+    positions[o]     = _edgeSamp.x;
+    positions[o + 1] = _edgeSamp.y;
+    positions[o + 2] = _edgeSamp.z;
+  }
+  line.geometry.attributes.position.needsUpdate = true;
+  line.geometry.computeBoundingSphere();
 }
 
 // ── directed signal pulses ────────────────────────────────────────────────────
@@ -1138,7 +1205,7 @@ function updatePulses(dt) {
       p.sprite.visible = false;
       return;
     }
-    _pulseTmp.lerpVectors(p.edge.a.pos, p.edge.b.pos, p.t);
+    p.edge.curve.getPoint(p.t, _pulseTmp);
     p.sprite.position.copy(_pulseTmp);
 
     // bell-curve brightness: ramp in, peak mid-edge, ramp out
@@ -1429,6 +1496,13 @@ const dampingValue  = document.getElementById('dampingValue');
 dampingSlider.addEventListener('input', () => {
   DAMPING = parseFloat(dampingSlider.value);
   dampingValue.textContent = DAMPING.toFixed(2);
+});
+
+const curveSlider = document.getElementById('curveSlider');
+const curveValue  = document.getElementById('curveValue');
+curveSlider.addEventListener('input', () => {
+  EDGE_BUNDLING = parseFloat(curveSlider.value);
+  curveValue.textContent = EDGE_BUNDLING.toFixed(2);
 });
 
 // palette picker — render chips and wire selection
