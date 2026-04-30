@@ -71,20 +71,35 @@
     #settings {
       position: fixed; top: 24px; right: 28px;
       width: 220px;
+      max-height: 90vh;
+      overflow-y: auto;
       display: flex; flex-direction: column; gap: 14px;
       padding: 18px;
       background: rgba(10, 14, 28, 0.55);
       border: 1px solid rgba(255,255,255,0.08);
       border-radius: 4px;
       backdrop-filter: blur(12px);
+      transform: translateX(0);
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+      z-index: 100;
+    }
+    #settings.hidden {
+      transform: translateX(calc(100% + 40px));
+      pointer-events: none;
+    }
+    #settingsTrigger {
+      position: fixed; top: 0; right: 0;
+      width: 80px; height: 100%;
+      z-index: 99;
     }
     #settings .group { display: flex; flex-direction: column; gap: 8px; }
     #settings .label {
-      font-size: 9px;
-      letter-spacing: 0.18em;
+      font-size: 10px;
+      letter-spacing: 0.22em;
       text-transform: uppercase;
-      color: #6c7a99;
-      font-weight: 500;
+      color: #e6e9f2;
+      font-weight: 600;
+      margin-top: 4px;
     }
     #settings .label-sm {
       font-size: 9px;
@@ -203,7 +218,8 @@
     <span>hover</span> isolate connections
   </div>
 </div>
-<div id="settings">
+<div id="settingsTrigger"></div>
+<div id="settings" class="hidden">
   <div class="group">
     <div class="label">Layout</div>
     <div id="layoutGrid" class="layout-grid"></div>
@@ -225,6 +241,14 @@
       <span class="label">Stars</span>
       <div id="toggleStars" class="toggle on"></div>
     </div>
+  </div>
+
+  <div class="group">
+    <div class="row">
+      <span class="label">Cluster Auras</span>
+      <span id="aurasValue" class="value">0.55</span>
+    </div>
+    <input id="aurasSlider" type="range" min="0" max="1" step="0.05" value="0.55" />
   </div>
 
   <div class="group">
@@ -447,7 +471,7 @@ function makeCluster(id) {
     color: 0xffffff,
     blending: THREE.AdditiveBlending,
     transparent: true,
-    opacity: 0.55,
+    opacity: AURA_OPACITY,
     depthWrite: false,
     depthTest: true,
   }));
@@ -981,6 +1005,7 @@ for (let i = 0; i < PULSE_POOL_SIZE; i++) {
 let PULSE_TARGET_POPULATION = 90;   // roughly how many pulses in flight
 let PULSE_BASE_SPEED        = 0.55; // travel rate (1.0 = whole edge per second)
 let PULSE_BRIGHTNESS        = 1.0;  // opacity multiplier
+let AURA_OPACITY            = 0.55; // cluster aura opacity
 
 function spawnPulse() {
   if (!edges.length) return;
@@ -1202,12 +1227,36 @@ Object.entries(LAYOUTS).forEach(([key, layout]) => {
   layoutGrid.appendChild(chip);
 });
 
+// settings panel hover-reveal
+const settingsTrigger = document.getElementById('settingsTrigger');
+const settingsPanel   = document.getElementById('settings');
+let panelVisible = false;
+
+settingsTrigger.addEventListener('mouseenter', () => {
+  panelVisible = true;
+  settingsPanel.classList.remove('hidden');
+});
+
+settingsPanel.addEventListener('mouseleave', () => {
+  panelVisible = false;
+  settingsPanel.classList.add('hidden');
+});
+
 // stars toggle
 const toggleStars = document.getElementById('toggleStars');
 toggleStars.addEventListener('click', () => {
   const on = !toggleStars.classList.contains('on');
   toggleStars.classList.toggle('on', on);
   starfield.visible = on;
+});
+
+// cluster auras opacity
+const aurasSlider = document.getElementById('aurasSlider');
+const aurasValue  = document.getElementById('aurasValue');
+aurasSlider.addEventListener('input', () => {
+  AURA_OPACITY = parseFloat(aurasSlider.value);
+  aurasValue.textContent = AURA_OPACITY.toFixed(2);
+  clusters.forEach(c => { c.aura.material.opacity = AURA_OPACITY; });
 });
 
 // glow intensity → bloom strength
