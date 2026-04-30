@@ -241,6 +241,28 @@
   </div>
 
   <div class="group">
+    <div class="label">Signals</div>
+
+    <div class="row">
+      <span class="label-sm">Count</span>
+      <span id="pulseCountValue" class="value">90</span>
+    </div>
+    <input id="pulseCountSlider" type="range" min="0" max="200" step="5" value="90" />
+
+    <div class="row">
+      <span class="label-sm">Speed</span>
+      <span id="pulseSpeedValue" class="value">0.55</span>
+    </div>
+    <input id="pulseSpeedSlider" type="range" min="0.1" max="2" step="0.1" value="0.55" />
+
+    <div class="row">
+      <span class="label-sm">Brightness</span>
+      <span id="pulseBrightValue" class="value">1.00</span>
+    </div>
+    <input id="pulseBrightSlider" type="range" min="0" max="2" step="0.1" value="1" />
+  </div>
+
+  <div class="group">
     <div class="label">Physics</div>
 
     <div class="row">
@@ -956,8 +978,9 @@ for (let i = 0; i < PULSE_POOL_SIZE; i++) {
   pulses.push({ sprite, active: false, edge: null, t: 0, speed: 1 });
 }
 
-const PULSE_TARGET_POPULATION = 90;   // roughly how many pulses in flight
-const PULSE_BASE_SPEED        = 0.55; // travel rate (1.0 = whole edge per second)
+let PULSE_TARGET_POPULATION = 90;   // roughly how many pulses in flight
+let PULSE_BASE_SPEED        = 0.55; // travel rate (1.0 = whole edge per second)
+let PULSE_BRIGHTNESS        = 1.0;  // opacity multiplier
 
 function spawnPulse() {
   if (!edges.length) return;
@@ -999,8 +1022,8 @@ function updatePulses(dt) {
 
     // bell-curve brightness: ramp in, peak mid-edge, ramp out
     const envelope = Math.sin(p.t * Math.PI);
-    p.sprite.material.opacity = envelope;
-    p.sprite.scale.setScalar(1.6 + envelope * 2.2);
+    p.sprite.material.opacity = Math.min(1, envelope * PULSE_BRIGHTNESS);
+    p.sprite.scale.setScalar((1.6 + envelope * 2.2) * (0.6 + PULSE_BRIGHTNESS * 0.7));
   });
 }
 
@@ -1194,6 +1217,28 @@ glowSlider.addEventListener('input', () => {
   const v = parseFloat(glowSlider.value);
   bloomPass.strength = v;
   glowValue.textContent = v.toFixed(2);
+});
+
+// signal/pulse sliders
+const pulseCountSlider = document.getElementById('pulseCountSlider');
+const pulseCountValue  = document.getElementById('pulseCountValue');
+pulseCountSlider.addEventListener('input', () => {
+  PULSE_TARGET_POPULATION = parseInt(pulseCountSlider.value);
+  pulseCountValue.textContent = PULSE_TARGET_POPULATION.toFixed(0);
+});
+
+const pulseSpeedSlider = document.getElementById('pulseSpeedSlider');
+const pulseSpeedValue  = document.getElementById('pulseSpeedValue');
+pulseSpeedSlider.addEventListener('input', () => {
+  PULSE_BASE_SPEED = parseFloat(pulseSpeedSlider.value);
+  pulseSpeedValue.textContent = PULSE_BASE_SPEED.toFixed(2);
+});
+
+const pulseBrightSlider = document.getElementById('pulseBrightSlider');
+const pulseBrightValue  = document.getElementById('pulseBrightValue');
+pulseBrightSlider.addEventListener('input', () => {
+  PULSE_BRIGHTNESS = parseFloat(pulseBrightSlider.value);
+  pulseBrightValue.textContent = PULSE_BRIGHTNESS.toFixed(2);
 });
 
 // physics sliders
