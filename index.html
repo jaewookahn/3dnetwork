@@ -98,6 +98,33 @@
     .palette-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
     }
+    .layout-grid {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .layout-chip {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 3px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .layout-chip:hover { background: rgba(255,255,255,0.07); }
+    .layout-chip.active {
+      border-color: rgba(120,180,255,0.55);
+      background: rgba(120,180,255,0.10);
+    }
+    .layout-chip .name {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #c5cee0;
+      flex: 1;
+    }
+    .layout-chip svg { flex-shrink: 0; }
+    .layout-chip svg circle, .layout-chip svg line { stroke: #aebbd8; }
+    .layout-chip.active svg circle, .layout-chip.active svg line { stroke: #fff; }
     .palette-chip {
       display: flex; flex-direction: column; align-items: stretch;
       padding: 6px 8px;
@@ -170,6 +197,11 @@
   </div>
 </div>
 <div id="settings">
+  <div class="group">
+    <div class="label">Layout</div>
+    <div id="layoutGrid" class="layout-grid"></div>
+  </div>
+
   <div class="group">
     <div class="label">Actions</div>
     <div class="btn-row">
@@ -593,6 +625,180 @@ function fitCameraToGraph(margin = 1.35) {
   controls.update();
 }
 
+// ── layout system ─────────────────────────────────────────────────────────────
+// Each layout produces target positions; physics is blended toward them via
+// `layoutLock` (0 = pure physics, 1 = positions snapped to layout).
+//
+//   force3d  — full 3D force-directed simulation (no targets)
+//   flat2d   — same physics, but z is collapsed to 0 (a flattened force graph)
+//   parallel — clusters arranged as columns; nodes stack vertically per column
+const LAYOUTS = {
+  force3d: { label: '3D Force', flatten: 0, lock: 0,    is3D: true  },
+  flat2d:  { label: '2D Flat',  flatten: 1, lock: 0,    is3D: false },
+  parallel:{ label: 'Parallel', flatten: 1, lock: 0.92, is3D: false },
+};
+
+let layoutMode      = 'force3d';
+let flatten         = 0;
+let flattenTarget   = 0;
+let layoutLock      = 0;
+let layoutLockTarget= 0;
+const TWEEN_RATE    = 2.4; // per second, applies to flatten + layoutLock
+let layoutTargets   = new Map(); // node → Vector3
+
+let camTweening = false;
+let camTweenT = 0;
+const CAM_TWEEN_DURATION = 1.4;
+const _camStartPos = new THREE.Vector3();
+const _camEndPos   = new THREE.Vector3();
+const _camStartTgt = new THREE.Vector3();
+const _camEndTgt   = new THREE.Vector3();
+let saved3DPos = null;
+let saved3DTgt = null;
+
+const easeInOutCubic = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
+
+// — layout target builders —
+function computeTargets_parallel() {
+  const targets = new Map();
+  const COL_SPACING  = 26;
+  const NODE_SPACING = 7.5;
+  const xOffset = -((clusters.length - 1) / 2) * COL_SPACING;
+
+  clusters.forEach((cluster, ci) => {
+    const cn = nodes.filter(n => n.cluster === cluster);
+    const yOffset = -((cn.length - 1) / 2) * NODE_SPACING;
+    const x = xOffset + ci * COL_SPACING;
+    cn.forEach((n, ni) => {
+      targets.set(n, new THREE.Vector3(x, yOffset + ni * NODE_SPACING, 0));
+    });
+  });
+  return targets;
+}
+
+// frame the camera around any set of positions (current OR target)
+function fitCameraToPositions(positions, frontOn = false, margin = 1.4) {
+  if (!positions.length) return;
+  const center = new THREE.Vector3();
+  positions.forEach(p => center.add(p));
+  center.divideScalar(positions.length);
+  if (frontOn) center.z = 0;
+
+  let maxR = 0;
+  positions.forEach(p => {
+    const dx = p.x - center.x;
+    const dy = p.y - center.y;
+    const dz = frontOn ? 0 : (p.z - center.z);
+    maxR = Math.max(maxR, Math.sqrt(dx*dx + dy*dy + dz*dz));
+  });
+  maxR += 10;
+
+  const fov = camera.fov * Math.PI / 180;
+  const distV = (maxR * margin) / Math.tan(fov / 2);
+  const distH = distV / camera.aspect;
+  const dist  = Math.max(distV, distH);
+
+  _camStartPos.copy(camera.position);
+  _camStartTgt.copy(controls.target);
+  if (frontOn) {
+    _camEndPos.set(center.x, center.y, dist);
+    _camEndTgt.copy(center);
+  } else {
+    const dir = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+    if (dir.lengthSq() < 0.001) dir.set(0, 0.15, 1).normalize();
+    _camEndPos.copy(center).addScaledVector(dir, dist);
+    _camEndTgt.copy(center);
+  }
+  camTweenT = 0;
+  camTweening = true;
+}
+
+function setLayout(key) {
+  if (!LAYOUTS[key] || key === layoutMode) return;
+  const prev = LAYOUTS[layoutMode];
+  const next = LAYOUTS[key];
+  layoutMode = key;
+
+  flattenTarget    = next.flatten;
+  layoutLockTarget = next.lock;
+  controls.autoRotate   = next.is3D;
+  controls.enableRotate = next.is3D;
+
+  if (prev.is3D && !next.is3D) {
+    saved3DPos = camera.position.clone();
+    saved3DTgt = controls.target.clone();
+  }
+
+  // build targets if this layout uses positional locking
+  if (key === 'parallel') {
+    layoutTargets = computeTargets_parallel();
+  } else {
+    layoutTargets = new Map();
+  }
+
+  // when re-entering a 3D layout from a flat/locked one, snap the flatten
+  // and lock parameters to 0 immediately so the next simulate step doesn't
+  // squash the z-perturbation we're about to seed
+  if (next.is3D && !prev.is3D) {
+    flatten = 0;
+    layoutLock = 0;
+    nodes.forEach(n => {
+      n.pos.z = (Math.random() - 0.5) * 28;
+      n.vel.z = (Math.random() - 0.5) * 4;
+    });
+  }
+
+  // frame the camera using the most representative positions for this layout
+  if (key === 'parallel') {
+    fitCameraToPositions([...layoutTargets.values()], true);
+  } else if (key === 'flat2d') {
+    fitCameraToPositions(nodes.map(n => new THREE.Vector3(n.pos.x, n.pos.y, 0)), true);
+  } else {
+    // force3d — restore previous 3D camera if available
+    _camStartPos.copy(camera.position);
+    _camStartTgt.copy(controls.target);
+    if (saved3DPos) {
+      _camEndPos.copy(saved3DPos);
+      _camEndTgt.copy(saved3DTgt);
+    } else {
+      _camEndPos.set(0, 30, 240);
+      _camEndTgt.set(0, 0, 0);
+    }
+    camTweenT = 0;
+    camTweening = true;
+  }
+
+  // sync UI
+  document.querySelectorAll('.layout-chip').forEach(el => {
+    el.classList.toggle('active', el.dataset.key === key);
+  });
+}
+
+function updateViewTransition(dt) {
+  // tween flatten
+  if (flatten !== flattenTarget) {
+    const s = TWEEN_RATE * dt * Math.sign(flattenTarget - flatten);
+    flatten += s;
+    if ((s > 0 && flatten > flattenTarget) || (s < 0 && flatten < flattenTarget))
+      flatten = flattenTarget;
+  }
+  // tween layout lock
+  if (layoutLock !== layoutLockTarget) {
+    const s = TWEEN_RATE * dt * Math.sign(layoutLockTarget - layoutLock);
+    layoutLock += s;
+    if ((s > 0 && layoutLock > layoutLockTarget) || (s < 0 && layoutLock < layoutLockTarget))
+      layoutLock = layoutLockTarget;
+  }
+  // tween camera
+  if (camTweening) {
+    camTweenT = Math.min(1, camTweenT + dt / CAM_TWEEN_DURATION);
+    const e = easeInOutCubic(camTweenT);
+    camera.position.lerpVectors(_camStartPos, _camEndPos, e);
+    controls.target.lerpVectors(_camStartTgt, _camEndTgt, e);
+    if (camTweenT >= 1) camTweening = false;
+  }
+}
+
 // run the physics headless so the layout is settled before render
 function prewarmSimulation(iterations = 350) {
   const wasFrozen = frozen;
@@ -646,6 +852,23 @@ function simulate() {
     n.vel.addScaledVector(n.acc, DT);
     n.vel.multiplyScalar(DAMPING);
     n.pos.addScaledVector(n.vel, DT);
+
+    // collapse toward z=0 when current layout requests it
+    if (flatten > 0) {
+      n.vel.z *= 1 - flatten;
+      n.pos.z = THREE.MathUtils.lerp(n.pos.z, 0, flatten * 0.12);
+      if (flatten >= 1) n.pos.z = 0;
+    }
+
+    // pull toward layout target (parallel, etc.) — overrides physics smoothly
+    if (layoutLock > 0 && layoutTargets.size) {
+      const t = layoutTargets.get(n);
+      if (t) {
+        n.pos.lerp(t, layoutLock * 0.16);
+        n.vel.multiplyScalar(1 - layoutLock * 0.5);
+      }
+    }
+
     n.mesh.position.copy(n.pos);
   });
 
@@ -832,12 +1055,67 @@ document.getElementById('btnAdd').addEventListener('click', () => {
 });
 
 document.getElementById('btnReset').addEventListener('click', () => {
+  // force-reset to 3D layout for the new graph
+  layoutMode = 'force3d';
+  flatten = 0; flattenTarget = 0;
+  layoutLock = 0; layoutLockTarget = 0;
+  layoutTargets = new Map();
+  controls.enableRotate = true;
+  controls.autoRotate = true;
+  document.querySelectorAll('.layout-chip').forEach(el => {
+    el.classList.toggle('active', el.dataset.key === 'force3d');
+  });
+
   buildGraph();
   prewarmSimulation();
   fitCameraToGraph();
 });
 
 document.getElementById('btnFit').addEventListener('click', () => fitCameraToGraph());
+
+// layout selector — chips with little icons
+const LAYOUT_ICONS = {
+  force3d: `<svg width="20" height="14" viewBox="0 0 20 14" fill="none" stroke-width="1">
+              <line x1="4" y1="3" x2="10" y2="7"/><line x1="10" y1="7" x2="16" y2="4"/>
+              <line x1="10" y1="7" x2="14" y2="11"/><line x1="4" y1="3" x2="6" y2="11"/>
+              <circle cx="4"  cy="3"  r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="16" cy="4"  r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="10" cy="7"  r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="14" cy="11" r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="6"  cy="11" r="1.6" fill="currentColor" stroke="none"/>
+            </svg>`,
+  flat2d: `<svg width="20" height="14" viewBox="0 0 20 14" fill="none" stroke-width="1">
+              <line x1="3" y1="7" x2="17" y2="7"/><line x1="10" y1="2" x2="10" y2="12"/>
+              <circle cx="3"  cy="7"  r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="17" cy="7"  r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="10" cy="2"  r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="10" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+              <circle cx="10" cy="7"  r="1.6" fill="currentColor" stroke="none"/>
+            </svg>`,
+  parallel: `<svg width="20" height="14" viewBox="0 0 20 14" fill="none" stroke-width="1">
+              <line x1="5"  y1="2" x2="5"  y2="12"/>
+              <line x1="10" y1="2" x2="10" y2="12"/>
+              <line x1="15" y1="2" x2="15" y2="12"/>
+              <line x1="5" y1="4" x2="10" y2="7"/>
+              <line x1="10" y1="9" x2="15" y2="5"/>
+              <circle cx="5"  cy="4"  r="1.4" fill="currentColor" stroke="none"/>
+              <circle cx="5"  cy="10" r="1.4" fill="currentColor" stroke="none"/>
+              <circle cx="10" cy="7"  r="1.4" fill="currentColor" stroke="none"/>
+              <circle cx="10" cy="9"  r="1.4" fill="currentColor" stroke="none"/>
+              <circle cx="15" cy="5"  r="1.4" fill="currentColor" stroke="none"/>
+              <circle cx="15" cy="11" r="1.4" fill="currentColor" stroke="none"/>
+            </svg>`,
+};
+
+const layoutGrid = document.getElementById('layoutGrid');
+Object.entries(LAYOUTS).forEach(([key, layout]) => {
+  const chip = document.createElement('div');
+  chip.className = 'layout-chip' + (key === layoutMode ? ' active' : '');
+  chip.dataset.key = key;
+  chip.innerHTML = `${LAYOUT_ICONS[key]}<span class="name">${layout.label}</span>`;
+  chip.addEventListener('click', () => setLayout(key));
+  layoutGrid.appendChild(chip);
+});
 
 // stars toggle
 const toggleStars = document.getElementById('toggleStars');
@@ -905,6 +1183,7 @@ function animate() {
 
   simulate();
   updatePulses(dt);
+  updateViewTransition(dt);
   updateHover();
   controls.update();
 
